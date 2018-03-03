@@ -90,6 +90,8 @@ struct InterfaceController_Iface_pvt
     String* name;
     int beaconState;
     struct Map_EndpointsBySockaddr peerMap;
+    /** The number of the next peer to try pinging, this iterates through the list of peers. */
+    uint32_t lastPeerPinged;
     struct InterfaceController_pvt* ic;
     struct Allocator* alloc;
     Identity
@@ -301,12 +303,17 @@ static void iciPing(struct InterfaceController_Iface_pvt* ici, struct InterfaceC
     uint64_t now = Time_currentTimeMilliseconds(ic->eventBase);
 
     // scan for endpoints have not sent anything recently.
-    uint32_t startAt = Random_uint32(ic->rand) % ici->peerMap.count;
+    uint32_t startAt = ici->lastPeerPinged = (ici->lastPeerPinged + 1) % ici->peerMap.count;
     for (uint32_t i = startAt, count = 0; count < ici->peerMap.count;) {
         i = (i + 1) % ici->peerMap.count;
         count++;
 
         struct Peer* ep = ici->peerMap.values[i];
+
+        uint8_t keyIfDebug[56];
+        if (Defined(Log_DEBUG)) {
+            Base32_encode(keyIfDebug, 56, ep->caSession->herPublicKey, 32);
+        }
 
         if (ep->addr.protocolVersion && now < ep->timeOfLastMessage + ic->pingAfterMilliseconds) {
             // It's sending traffic so leave it alone.
@@ -315,7 +322,9 @@ static void iciPing(struct InterfaceController_Iface_pvt* ici, struct InterfaceC
             // There is a risk that the NodeStore somehow forgets about our peers while the peers
             // are still happily sending traffic. To break this bad cycle lets just send a PEER
             // message once per second for whichever peer is the first that we address.
-            if (i == startAt && ep->state == InterfaceController_PeerState_ESTABLISHED) {
+            if (count == 1 && ep->state == InterfaceController_PeerState_ESTABLISHED) {
+                Log_debug(ic->logger, "Notifying about peer number [%d/%d] [%s]",
+                    i, ici->peerMap.count, keyIfDebug);
                 sendPeer(0xffffffff, PFChan_Core_PEER, ep);
             }
 
@@ -325,11 +334,6 @@ static void iciPing(struct InterfaceController_Iface_pvt* ici, struct InterfaceC
             // Possibly an out-of-date node which is mangling packets, don't ping too often
             // because it causes the RumorMill to be filled with this node over and over.
             continue;
-        }
-
-        uint8_t keyIfDebug[56];
-        if (Defined(Log_DEBUG)) {
-            Base32_encode(keyIfDebug, 56, ep->caSession->herPublicKey, 32);
         }
 
         if (ep->isIncomingConnection && now > ep->timeOfLastMessage + ic->forgetAfterMilliseconds) {
@@ -507,7 +511,10 @@ static int closeInterface(struct Allocator_OnFreeJob* job)
     sendPeer(0xffffffff, PFChan_Core_PEER_GONE, toClose);
 
     int index = Map_EndpointsBySockaddr_indexForHandle(toClose->handle, &toClose->ici->peerMap);
-    Assert_true(index >= 0 && toClose->ici->peerMap.values[index] == toClose);
+    Log_debug(toClose->ici->ic->logger,
+        "Closing interface [%d] with handle [%u]", index, toClose->handle);
+    Assert_true(index >= 0);
+    Assert_true(toClose->ici->peerMap.values[index] == toClose);
     Map_EndpointsBySockaddr_remove(index, &toClose->ici->peerMap);
     return 0;
 }
