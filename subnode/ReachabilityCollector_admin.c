@@ -16,6 +16,7 @@
 #include "benc/List.h"
 #include "crypto/Key.h"
 #include "subnode/ReachabilityCollector.h"
+#include "subnode/ReachabilityCollector_admin.h"
 #include "util/AddrTools.h"
 #include "util/Identity.h"
 
@@ -25,6 +26,23 @@ struct Context {
     struct ReachabilityCollector* rc;
     Identity
 };
+
+static List* numList(void* buf, uint32_t numberSz, struct Allocator* alloc)
+{
+    List* l = List_new(alloc);
+    for (int i = 0; i < LinkState_SLOTS; i++) {
+        int64_t num;
+        if (numberSz == 2) {
+            num = ((uint16_t*)buf)[i];
+        } else if (numberSz == 4) {
+            num = ((uint32_t*)buf)[i];
+        } else {
+            Assert_failure("unexpected number size");
+        }
+        List_addInt(l, num, alloc);
+    }
+    return l;
+}
 
 #define NODES_PER_PAGE 8
 static void getPeerInfo(Dict* args, void* vcontext, String* txid, struct Allocator* requestAlloc)
@@ -45,6 +63,16 @@ static void getPeerInfo(Dict* args, void* vcontext, String* txid, struct Allocat
         Dict_putStringC(
             pid, "pathThemToUs", String_newBinary(rpath, 19, requestAlloc), requestAlloc);
         Dict_putIntC(pid, "querying", pi->querying, requestAlloc);
+
+        Dict_putListC(
+            pid, "lagSlots", numList(pi->linkState.lagSlots, 2, requestAlloc), requestAlloc);
+        Dict_putListC(
+            pid, "dropSlots", numList(pi->linkState.dropSlots, 2, requestAlloc), requestAlloc);
+        Dict_putListC(
+            pid, "kbRecvSlots", numList(pi->linkState.kbRecvSlots, 4, requestAlloc), requestAlloc);
+        Dict_putIntC(
+            pid, "samples", pi->linkState.samples, requestAlloc);
+
         List_addDict(peerList, pid, requestAlloc);
     }
     Dict* out = Dict_new(requestAlloc);

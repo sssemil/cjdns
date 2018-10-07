@@ -869,6 +869,11 @@ enum CryptoAuth_DecryptErr CryptoAuth_decrypt(struct CryptoAuth_Session* session
                             session->context->logger);
 
             enum CryptoAuth_DecryptErr ret = decryptMessage(session, nonce, msg, secret);
+
+            // This prevents a few "ghost" dropped packets at the beginning of a session.
+            session->pub.replayProtector.baseOffset = nonce + 1;
+            session->pub.replayProtector.bitfield = 0;
+
             if (!ret) {
                 cryptoAuthDebug0(session, "Final handshake step succeeded");
                 Bits_memcpy(session->sharedSecret, secret, 32);
@@ -1020,13 +1025,13 @@ int CryptoAuth_removeUsers(struct CryptoAuth* context, String* login)
     return count;
 }
 
-List* CryptoAuth_getUsers(struct CryptoAuth* context, struct Allocator* alloc)
+struct StringList* CryptoAuth_getUsers(struct CryptoAuth* context, struct Allocator* alloc)
 {
     struct CryptoAuth_pvt* ca = Identity_check((struct CryptoAuth_pvt*) context);
 
-    List* users = List_new(alloc);
+    struct StringList* users = StringList_new(alloc);
     for (struct CryptoAuth_User* u = ca->users; u; u = u->next) {
-        List_addString(users, String_clone(u->login, alloc), alloc);
+        StringList_add(users, String_clone(u->login, alloc));
     }
 
     return users;
@@ -1069,14 +1074,26 @@ void CryptoAuth_setAuth(const String* password,
         Identity_check((struct CryptoAuth_Session_pvt*)caSession);
 
     if (!password && (session->password || session->authType)) {
+        if (session->passwdAlloc) {
+            Allocator_free(session->passwdAlloc);
+            session->passwdAlloc = NULL;
+        }
         session->password = NULL;
         session->authType = 0;
     } else if (!session->password || !String_equals(session->password, password)) {
-        session->password = String_clone(password, session->alloc);
+        if (session->passwdAlloc) {
+            Allocator_free(session->passwdAlloc);
+        }
+        session->passwdAlloc = Allocator_child(session->alloc);
+        session->password = String_clone(password, session->passwdAlloc);
         session->authType = 1;
         if (login) {
             session->authType = 2;
-            session->login = String_clone(login, session->alloc);
+            if (session->loginAlloc) {
+                Allocator_free(session->loginAlloc);
+            }
+            session->loginAlloc = Allocator_child(session->alloc);
+            session->login = String_clone(login, session->loginAlloc);
         }
     } else {
         return;

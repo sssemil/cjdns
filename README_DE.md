@@ -96,8 +96,9 @@ Für beide Platformen ist es nicht zwingend notwendig, doch aber vorzuziehen, [N
     sudo yum install install nodejs git
     sudo yum install @development-tools
 
-Aus dem Paket installieren:
-`sudo yum localinstall https://kojipkgs.fedoraproject.org//packages/cjdns/17.4/4.el6/src/cjdns-17.4-4.el6.src.rpm`
+#### Aus dem Paket installieren:
+
+    sudo yum localinstall https://kojipkgs.fedoraproject.org//packages/cjdns/17.4/4.el6/src/cjdns-17.4-4.el6.src.rpm
 
 Wenn du Suspend oder Hibernate auf einem Laptop verwendest wird cjdroute ein paar Minuten brauchen um Kaffee zu machen udn herauszufinden, was eigentlich gerade passiert ist, wenn es aufwacht.
 Du kannst das aber dramatisch beschleunigen:
@@ -148,12 +149,12 @@ Alternativ kannst du per AUR das Packet `cjdns-git` installieren.
 Nach der Installation ist die Konfigurationsdatei unter  `/etc/cjdroute.conf` zu finden.
 Um den Service `cjdns.service` zu starten, führe
 
-        systemctl start cjdns
+    systemctl start cjdns
 
  aus.
  Um ihn zu stoppen:
 
-       systemctl stop cjdns
+    systemctl stop cjdns
 
 #### Gentoo:
 
@@ -210,23 +211,23 @@ Und cjdns installieren.
 Kopiere das OpenRC Init Skript aus `contrib/openrc` nach `/etc/init.d/` und ändere die Variablen `CONFFILE` und `command` nach Bedarf.
 Nun starte cjdns mit dem Kommando
 
-   /etc/init.d/cjdns start
+    /etc/init.d/cjdns start
 
 Konfigiere das Initsystem cjdns automatisch zu starten
 
-   rc-update add cjdns default
+    rc-update add cjdns default
 
 Kopiere das service_restart Skript `contrib/gentoo/service_restart.sh` an eine beliebige, geeignete Stelle im Verzeichnisbaum deines Systems und ändere die eMailadresse. Wenn du keine eMail erhalten willst, wenn der Service neu gestartet wurde, dann kommentiere die komplette Zeile aus.
 Nun füge folgenden crontab Eintrag hinzu
 
-   # Restart crashed Services
-   * * * * *       root	/path/to/script/service_restart.sh
+    # Restart crashed Services
+    * * * * *       root	/path/to/script/service_restart.sh
 
 #### Solus:
 
 Abhängigkeiten:
 
-     sudo eopkg install nodejs git build-essential system.devel python gcc binutils kernal-headers xorg-server-devel
+    sudo eopkg install nodejs git build-essential system.devel python gcc binutils kernal-headers xorg-server-devel
 
 Dann folge den Schritten weiter unten:
 

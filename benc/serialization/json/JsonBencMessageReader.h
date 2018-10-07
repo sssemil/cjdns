@@ -12,22 +12,21 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#ifndef Penalty_H
-#define Penalty_H
+#ifndef JsonBencMessageReader_H
+#define JsonBencMessageReader_H
 
-#include "wire/SwitchHeader.h"
+#include "benc/Dict.h"
+#include "exception/Except.h"
 #include "memory/Allocator.h"
-#include "util/events/EventBase.h"
-#include "util/log/Log.h"
+#include "wire/Message.h"
 #include "util/Linker.h"
-Linker_require("switch/Penalty.c");
+Linker_require("benc/serialization/json/JsonBencMessageReader.c");
 
-struct Penalty
-{
-    int unused;
-};
+#include <stdbool.h>
 
-void Penalty_apply(struct Penalty* penalty, struct SwitchHeader* switchHeader, int messageLen);
-struct Penalty* Penalty_new(struct Allocator* alloc, struct EventBase* base, struct Log* log);
+Dict* JsonBencMessageReader_read(
+    struct Message* msg, struct Allocator* alloc, struct Except* eh, bool lax);
+char* JsonBencMessageReader_readNoExcept(
+    struct Message* msg, struct Allocator* alloc, Dict** outPtr, bool lax);
 
 #endif

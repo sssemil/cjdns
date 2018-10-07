@@ -102,7 +102,7 @@ def peerStats(cjdns,up=False,verbose=False,human_readable=False):
 
     i = 0;
     while True:
-        ps = cjdns.InterfaceController_peerStats(i);
+        ps = cjdns.InterfaceController_peerStats(page=i);
         peers = ps['peers']
         for p in peers:
             p.update(parseAddr(p['addr']))
@@ -114,7 +114,7 @@ def peerStats(cjdns,up=False,verbose=False,human_readable=False):
         i += 1
 
     if verbose:
-        STAT_FORMAT = '%s\tv%s\t%s\tin %s\tout %s\t%s\tdup %d los %d oor %d'
+        STAT_FORMAT = '%s\t%s\tv%s\t%s\tin %s\tout %s\t%s\tdup %d los %d oor %d'
 
         for peer in allPeers:
             ip = PublicToIp6_convert(peer['publicKey'])
@@ -125,7 +125,7 @@ def peerStats(cjdns,up=False,verbose=False,human_readable=False):
 				b_in  = sizeof_fmt(b_in)
 				b_out = sizeof_fmt(b_out)
             
-            p = STAT_FORMAT % (ip, peer['version'], peer['switchLabel'],
+            p = STAT_FORMAT % (peer['lladdr'], ip, peer['version'], peer['switchLabel'],
                                str(b_in), str(b_out), peer['state'],
                                peer['duplicates'], peer['lostPackets'],
                                peer['receivedOutOfRange'])

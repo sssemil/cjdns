@@ -40,13 +40,15 @@ struct ControlHandler_pvt
 static Iface_DEFUN handleError(struct Message* msg,
                                struct ControlHandler_pvt* ch,
                                uint64_t label,
-                               uint8_t* labelStr)
+                               uint8_t* labelStr,
+                               struct RouteHeader* rh)
 {
     if (msg->length < handleError_MIN_SIZE) {
         Log_info(ch->log, "DROP runt error packet from [%s]", labelStr);
         return NULL;
     }
-    Message_shift(msg, SwitchHeader_SIZE + 4, NULL);
+    msg->length = handleError_MIN_SIZE;
+    Message_push(msg, &rh->sh, SwitchHeader_SIZE, NULL);
     Message_push32(msg, 0xffffffff, NULL);
     Message_push32(msg, PFChan_Core_SWITCH_ERR, NULL);
     return Iface_next(&ch->eventIf, msg);
@@ -226,7 +228,7 @@ static Iface_DEFUN incomingFromCore(struct Message* msg, struct Iface* coreIf)
     struct Control* ctrl = (struct Control*) msg->bytes;
 
     if (ctrl->header.type_be == Control_ERROR_be) {
-        return handleError(msg, ch, label, labelStr);
+        return handleError(msg, ch, label, labelStr, &routeHdr);
 
     } else if (ctrl->header.type_be == Control_KEYPING_be
             || ctrl->header.type_be == Control_PING_be)

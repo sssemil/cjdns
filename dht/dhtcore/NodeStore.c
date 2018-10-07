@@ -453,7 +453,7 @@ static bool findBestParent(struct Node_Two* node, struct NodeStore_pvt* store)
             }
         }
     } while (ret);
-    uint64_t time1 = Time_hrtime(store->eventBase);
+    uint64_t time1 = Time_hrtime();
     if ((int64_t)(time1 - time0) > 1000000) {
         Log_warn(store->logger, "\n\nfindBestParent() took [%lld] ms\n\n",
             (long long) ((time1 - time0) / 1000000));
@@ -740,9 +740,22 @@ static uint64_t firstHopInPath(uint64_t label,
         return firstHopInPath_NO_NEXT_LINK;
     }
 
+    // Old:
     // check for a looping link, this should never happen but adding the assert helps me
     // refactor this function a little more agressively.
-    Assert_true(nextLink != parentLink);
+    //Assert_true(nextLink != parentLink);
+    //
+    // New:
+    // There *can* be loopy links because they are kept around in the hope that they'll be
+    // split later as more information comes in. For example we can discover A->A->D->E
+    // and later on we discover A->B->C->A->D->E because the B->C part was hidden, we saw
+    // it as A->A. If we encounter one of these loopey links, what we probably *should*
+    // do is skip the loop and resolve the next part of the path, but returning NO_NEXT_LINK
+    // is ok because we don't claim to have a full knowledge of the network and that is
+    // much easier. Update stops a rare assertion failure.
+    if (nextLink == parentLink) {
+        return firstHopInPath_NO_NEXT_LINK;
+    }
 
     if (label == nextLink->cannonicalLabel) {
         //logLink(store, nextLink, "Exact match");

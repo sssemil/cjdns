@@ -29,7 +29,7 @@ var GCC = process.env['CC'];
 var CFLAGS = process.env['CFLAGS'];
 var LDFLAGS = process.env['LDFLAGS'];
 
-var NO_MARCH_FLAG = ['ppc', 'ppc64'];
+var NO_MARCH_FLAG = ['arm', 'ppc', 'ppc64'];
 
 if (GCC) {
     // Already specified.
@@ -46,7 +46,7 @@ Builder.configure({
     crossCompiling: process.env['CROSS'] !== undefined,
     gcc:            GCC,
     tempDir:        process.env['CJDNS_BUILD_TMPDIR'] || '/tmp',
-    optimizeLevel:  '-O3',
+    optimizeLevel:  '-O0',
     logLevel:       process.env['Log_LEVEL'] || 'DEBUG'
 }, function (builder, waitFor) {
 
@@ -56,6 +56,7 @@ Builder.configure({
         '-Wextra',
         '-Werror',
         '-Wno-pointer-sign',
+        '-Wmissing-prototypes',
         '-pedantic',
         '-D', builder.config.systemName + '=1',
         '-D', 'CJD_PACKAGE_VERSION="' + builder.config.version + '"',
@@ -176,21 +177,25 @@ Builder.configure({
         builder.config.cflags.push('-Dandroid=1');
     }
 
-    CanCompile.check(builder,
-                     'int main() { return 0; }',
-                     [ builder.config.cflags, '-flto', '-x', 'c' ],
-                     function (err, can) {
-        if (can) {
-            console.log("Compiler supports link time optimization");
-            builder.config.ldflags.push(
-                '-flto',
-                builder.config.optimizeLevel
-            );
-        } else {
-            console.log("Link time optimization not supported [" + err + "]");
-        }
-        builder.config.cflags.push(builder.config.optimizeLevel);
-    });
+    if (process.env.NO_LTO) {
+        console.log("Link time optimization disabled");
+    } else {
+        CanCompile.check(builder,
+                        'int main() { return 0; }',
+                        [ builder.config.cflags, '-flto', '-x', 'c' ],
+                        function (err, can) {
+            if (can) {
+                console.log("Compiler supports link time optimization");
+                builder.config.ldflags.push(
+                    '-flto',
+                    builder.config.optimizeLevel
+                );
+            } else {
+                console.log("Link time optimization not supported [" + err + "]");
+            }
+            builder.config.cflags.push(builder.config.optimizeLevel);
+        });
+    }
 
     var uclibc = process.env['UCLIBC'] == '1';
     var libssp;

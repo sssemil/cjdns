@@ -17,6 +17,7 @@
 
 #include "memory/Allocator.h"
 #include "util/Identity.h"
+#include "util/Assert.h"
 
 #include <stdint.h>
 
@@ -39,13 +40,26 @@ struct Allocator_OnFreeJob_pvt {
 };
 
 struct Allocator_Allocation_pvt;
+#define Allocator_Allocation_pvt_SIZE_NOPAD ( \
+    Allocator_Allocation_SIZE + \
+    __SIZEOF_POINTER__ + \
+    __SIZEOF_LONG__ + \
+    __SIZEOF_POINTER__ \
+)
 struct Allocator_Allocation_pvt {
     struct Allocator_Allocation pub;
     struct Allocator_Allocation_pvt* next;
-#ifdef Allocator_USE_CANARIES
-    unsigned long beginCanary;
-#endif
+    #if Allocator_Allocation_pvt_SIZE_NOPAD < __BIGGEST_ALIGNMENT__
+        uint8_t _pad[__BIGGEST_ALIGNMENT__ - Allocator_Allocation_pvt_SIZE_NOPAD];
+        #define Allocator_Allocation_pvt_SIZE __BIGGEST_ALIGNMENT__
+    #else
+        #define Allocator_Allocation_pvt_SIZE Allocator_Allocation_pvt_SIZE_NOPAD
+    #endif
+    long lineNum;
+    const char* fileName;
 };
+Assert_compileTime(sizeof(struct Allocator_Allocation_pvt) == Allocator_Allocation_pvt_SIZE);
+Assert_compileTime(!(Allocator_Allocation_pvt_SIZE % __BIGGEST_ALIGNMENT__));
 
 /** Singly linked list of allocators. */
 struct Allocator_List;

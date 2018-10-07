@@ -60,7 +60,7 @@ This will keep our process alive and run it at the startup. At this point we jus
 
 ```bash
 sudo chmod +x /usr/local/bin/cjdroute_start # Execution
-sudo sudo launchctl load /Library/LaunchDaemons/com.cjdns.cjdroute.plist 
+sudo launchctl load /Library/LaunchDaemons/com.cjdns.cjdroute.plist 
 ```
 
 If everything is correct, you can now restart your Mac and it will automatically run cjdns. If you want to avoid the reboot, you can start the daemon using the following command:
@@ -84,3 +84,5 @@ Enjoy!
 <cjd> that would be the cause
 <vik> Tx .. starting with sudo fixed it ..
 ```
+
+You will probably also need to change `"bind": "all"` to `"bind": "en0"` in your `cjdroute.conf`. See [this](https://github.com/hyperboria/bugs/issues/160#issuecomment-320576127) issue.

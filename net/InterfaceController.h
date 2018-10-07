@@ -72,13 +72,32 @@ static inline char* InterfaceController_stateString(enum InterfaceController_Pee
     }
 }
 
+enum InterfaceController_BeaconState
+{
+    InterfaceController_BeaconState_DISABLED,
+    InterfaceController_BeaconState_ACCEPTING,
+    InterfaceController_BeaconState_SENDING
+};
+
+static inline char* InterfaceController_beaconStateString(enum InterfaceController_BeaconState bs)
+{
+    switch (bs) {
+        case InterfaceController_BeaconState_DISABLED:  return "DISABLED";
+        case InterfaceController_BeaconState_ACCEPTING: return "ACCEPTING";
+        case InterfaceController_BeaconState_SENDING:   return "SENDING";
+        default: return "INVALID";
+    }
+}
+
 /**
  * Stats about a peer
  */
 struct InterfaceController_PeerStats
 {
     struct Address addr;
+    struct Sockaddr* lladdr;
     int state;
+    int ifNum;
     uint64_t timeOfLastMessage;
     uint64_t bytesOut;
     uint64_t bytesIn;
@@ -88,6 +107,7 @@ struct InterfaceController_PeerStats
     /** Packet loss/duplication statistics. see: ReplayProtector */
     uint32_t duplicates;
     uint32_t lostPackets;
+    uint32_t receivedPackets;
     uint32_t receivedOutOfRange;
 
     uint32_t sendKbps;
@@ -96,7 +116,12 @@ struct InterfaceController_PeerStats
 
 struct InterfaceController
 {
-    int unused;
+    /*
+     * If set to true, high resolution timestamp data will be collected for each
+     * packet to help with estimating available bandwidth. Caution: this implies
+     * an extra syscall per packet.
+     */
+    bool timestampPackets;
 };
 
 struct InterfaceController_Iface
@@ -105,6 +130,10 @@ struct InterfaceController_Iface
 
     /** Interface number within InterfaceController. */
     int ifNum;
+
+    enum InterfaceController_BeaconState beaconState;
+
+    String* name;
 };
 
 /**
@@ -119,6 +148,13 @@ struct InterfaceController_Iface
 struct InterfaceController_Iface* InterfaceController_newIface(struct InterfaceController* ifc,
                                                  String* name,
                                                  struct Allocator* alloc);
+
+/** Get the number of interfaces registered with the controller. */
+int InterfaceController_ifaceCount(struct InterfaceController* ifc);
+
+/** Get an interface from the InterfaceController. */
+struct InterfaceController_Iface* InterfaceController_getIface(struct InterfaceController* ifc,
+                                                               int ifNum);
 
 /**
  * Add a new peer.

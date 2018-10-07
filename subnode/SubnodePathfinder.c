@@ -28,6 +28,7 @@
 #include "util/AddrTools.h"
 #include "util/events/Timeout.h"
 #include "net/SwitchPinger.h"
+#include "switch/LabelSplicer.h"
 #include "wire/Error.h"
 #include "wire/PFChan.h"
 #include "wire/DataHeader.h"
@@ -35,7 +36,16 @@
 
 #include "subnode/ReachabilityAnnouncer.h"
 
-
+struct Query {
+    struct Address target;
+    uint8_t routeFrom[16];
+    uint8_t routeTo[16];
+};
+#define Map_NAME OfPromiseByQuery
+#define Map_KEY_TYPE struct Query
+#define Map_VALUE_TYPE struct MsgCore_Promise*
+#define Map_ENABLE_HANDLES
+#include "util/Map.h"
 
 struct SubnodePathfinder_pvt
 {
@@ -63,6 +73,8 @@ struct SubnodePathfinder_pvt
     struct BoilerplateResponder* br;
 
     struct ReachabilityAnnouncer* ra;
+
+    struct Map_OfPromiseByQuery queryMap;
 
     struct SwitchPinger* sp;
     struct Iface switchPingerIf;
@@ -109,7 +121,7 @@ static Iface_DEFUN connected(struct SubnodePathfinder_pvt* pf, struct Message* m
     return NULL;
 }
 
-static void addressForNode(struct Address* addrOut, struct Message* msg)
+static uint32_t addressForNode(struct Address* addrOut, struct Message* msg)
 {
     struct PFChan_Node node;
     Message_pop(msg, &node, PFChan_Node_SIZE, NULL);
@@ -118,6 +130,7 @@ static void addressForNode(struct Address* addrOut, struct Message* msg)
     addrOut->path = Endian_bigEndianToHost64(node.path_be);
     Bits_memcpy(addrOut->key, node.publicKey, 32);
     Bits_memcpy(addrOut->ip6.bytes, node.ip6, 16);
+    return Endian_bigEndianToHost32(node.metric_be);
 }
 
 static Iface_DEFUN switchErr(struct Message* msg, struct SubnodePathfinder_pvt* pf)
@@ -127,7 +140,9 @@ static Iface_DEFUN switchErr(struct Message* msg, struct SubnodePathfinder_pvt* 
 
     uint64_t path = Endian_bigEndianToHost64(switchErr.sh.label_be);
 
-    if (path == pf->pub.snh->snodeAddr.path) {
+    if (pf->pub.snh->snodeAddr.path &&
+        pf->pub.snh->snodeAddr.path != path &&
+        LabelSplicer_routesThrough(pf->pub.snh->snodeAddr.path, path)) {
         uint8_t pathStr[20];
         AddrTools_printPath(pathStr, path);
         int err = Endian_bigEndianToHost32(switchErr.ctrlErr.errorType_be);
@@ -142,10 +157,20 @@ static Iface_DEFUN switchErr(struct Message* msg, struct SubnodePathfinder_pvt* 
     return NULL;
 }
 
+struct SnodeQuery {
+    struct SubnodePathfinder_pvt* pf;
+    uint32_t mapHandle;
+    Identity
+};
+
 static void getRouteReply(Dict* msg, struct Address* src, struct MsgCore_Promise* prom)
 {
-    struct SubnodePathfinder_pvt* pf =
-        Identity_check((struct SubnodePathfinder_pvt*) prom->userData);
+    struct SnodeQuery* snq = Identity_check((struct SnodeQuery*) prom->userData);
+    struct SubnodePathfinder_pvt* pf = Identity_check(snq->pf);
+    int index = Map_OfPromiseByQuery_indexForHandle(snq->mapHandle, &pf->queryMap);
+    Assert_true(index > -1);
+    Map_OfPromiseByQuery_remove(index, &pf->queryMap);
+
     if (!src) {
         Log_debug(pf->log, "GetRoute timeout");
         return;
@@ -178,17 +203,37 @@ static Iface_DEFUN searchReq(struct Message* msg, struct SubnodePathfinder_pvt* 
     AddrTools_printIp(printedAddr, addr);
     Log_debug(pf->log, "Search req [%s]", printedAddr);
 
+    for (int i = 0; i < pf->myPeers->length; ++i) {
+        struct Address* myPeer = AddrSet_get(pf->myPeers, i);
+        if (!Bits_memcmp(myPeer->ip6.bytes, addr, 16)) {
+            return sendNode(msg, myPeer, 0xfff00000, PFChan_Pathfinder_NODE, pf);
+        }
+    }
+
     if (!pf->pub.snh || !pf->pub.snh->snodeAddr.path) { return NULL; }
 
     if (!Bits_memcmp(pf->pub.snh->snodeAddr.ip6.bytes, addr, 16)) {
         return sendNode(msg, &pf->pub.snh->snodeAddr, 0xfff00000, PFChan_Pathfinder_NODE, pf);
     }
 
+    struct Query q = { .routeFrom = { 0 } };
+    Bits_memcpy(&q.target, &pf->pub.snh->snodeAddr, sizeof(struct Address));
+    Bits_memcpy(q.routeFrom, pf->myAddress->ip6.bytes, 16);
+    Bits_memcpy(q.routeFrom, addr, 16);
+    if (Map_OfPromiseByQuery_indexForKey(&q, &pf->queryMap) > -1) {
+        Log_debug(pf->log, "Skipping snode query because one is outstanding");
+        return NULL;
+    }
+
     struct MsgCore_Promise* qp = MsgCore_createQuery(pf->msgCore, 0, pf->alloc);
+
+    struct SnodeQuery* snq = Allocator_calloc(qp->alloc, sizeof(struct SnodeQuery), 1);
+    Identity_set(snq);
+    snq->pf = pf;
 
     Dict* dict = qp->msg = Dict_new(qp->alloc);
     qp->cb = getRouteReply;
-    qp->userData = pf;
+    qp->userData = snq;
 
     Assert_true(AddressCalc_validAddress(pf->pub.snh->snodeAddr.ip6.bytes));
     qp->target = &pf->pub.snh->snodeAddr;
@@ -201,27 +246,24 @@ static Iface_DEFUN searchReq(struct Message* msg, struct SubnodePathfinder_pvt* 
     String* target = String_newBinary(addr, 16, qp->alloc);
     Dict_putStringC(dict, "tar", target, qp->alloc);
 
+    int index = Map_OfPromiseByQuery_put(&q, &qp, &pf->queryMap);
+    snq->mapHandle = pf->queryMap.handles[index];
+
     return NULL;
 }
 
 static void rcChange(struct ReachabilityCollector* rc,
                      uint8_t nodeIpv6[16],
-                     uint64_t pathThemToUs,
-                     uint64_t pathUsToThem,
-                     uint32_t mtu,
-                     uint16_t drops,
-                     uint16_t latency,
-                     uint16_t penalty)
+                     struct ReachabilityCollector_PeerInfo* pi)
 {
     struct SubnodePathfinder_pvt* pf = Identity_check((struct SubnodePathfinder_pvt*) rc->userData);
-    ReachabilityAnnouncer_updatePeer(
-        pf->ra, nodeIpv6, pathThemToUs, pathUsToThem, mtu, drops, latency, penalty);
+    ReachabilityAnnouncer_updatePeer(pf->ra, nodeIpv6, pi);
 }
 
 static Iface_DEFUN peer(struct Message* msg, struct SubnodePathfinder_pvt* pf)
 {
     struct Address addr;
-    addressForNode(&addr, msg);
+    uint32_t metric = addressForNode(&addr, msg);
     String* str = Address_toString(&addr, msg->alloc);
     Log_debug(pf->log, "Peer [%s]", str->bytes);
 
@@ -239,6 +281,9 @@ static Iface_DEFUN peer(struct Message* msg, struct SubnodePathfinder_pvt* pf)
     //NodeCache_discoverNode(pf->nc, &addr);
 
     ReachabilityCollector_change(pf->pub.rc, &addr);
+    if ((metric & 0xffff) < 0xffff) {
+        ReachabilityCollector_lagSample(pf->pub.rc, addr.path, (metric & 0xffff));
+    }
 
     return sendNode(msg, &addr, 0xfff00000, PFChan_Pathfinder_NODE, pf);
 }
@@ -323,10 +368,21 @@ static Iface_DEFUN ctrlMsg(struct Message* msg, struct SubnodePathfinder_pvt* pf
     return Iface_next(&pf->switchPingerIf, msg);
 }
 
+struct UnsetupSessionPing {
+    struct SubnodePathfinder_pvt* pf;
+    uint32_t mapHandle;
+    Identity
+};
+
 static void unsetupSessionPingReply(Dict* msg, struct Address* src, struct MsgCore_Promise* prom)
 {
-    struct SubnodePathfinder_pvt* pf =
-        Identity_check((struct SubnodePathfinder_pvt*) prom->userData);
+    struct UnsetupSessionPing* usp =
+        Identity_check((struct UnsetupSessionPing*) prom->userData);
+    struct SubnodePathfinder_pvt* pf = Identity_check(usp->pf);
+    int index = Map_OfPromiseByQuery_indexForHandle(usp->mapHandle, &pf->queryMap);
+    Assert_true(index > -1);
+    Map_OfPromiseByQuery_remove(index, &pf->queryMap);
+
     if (!src) {
         //Log_debug(pf->log, "Ping timeout");
         return;
@@ -342,28 +398,42 @@ static Iface_DEFUN unsetupSession(struct Message* msg, struct SubnodePathfinder_
     struct PFChan_Node node;
     Message_pop(msg, &node, PFChan_Node_SIZE, NULL);
     Assert_true(!msg->length);
-    struct Address addr = { .protocolVersion = 0 };
-    Bits_memcpy(addr.ip6.bytes, node.ip6, 16);
-    Bits_memcpy(addr.key, node.publicKey, 32);
-    addr.protocolVersion = Endian_bigEndianToHost32(node.version_be);
-    addr.path = Endian_bigEndianToHost64(node.path_be);
+    struct Query q = { .routeFrom = { 0 } };
+    struct Address* addr = &q.target;
+    Bits_memcpy(addr->ip6.bytes, node.ip6, 16);
+    Bits_memcpy(addr->key, node.publicKey, 32);
+    addr->protocolVersion = Endian_bigEndianToHost32(node.version_be);
+    addr->path = Endian_bigEndianToHost64(node.path_be);
+
+    if (Map_OfPromiseByQuery_indexForKey(&q, &pf->queryMap) > -1) {
+        Log_debug(pf->log, "Skipping ping because one is already outstanding");
+        return NULL;
+    }
 
     // We have a path to the node but the session is not setup, lets ping them...
     struct MsgCore_Promise* qp = MsgCore_createQuery(pf->msgCore, 0, pf->alloc);
 
+    struct UnsetupSessionPing* usp =
+        Allocator_calloc(qp->alloc, sizeof(struct UnsetupSessionPing), 1);
+    Identity_set(usp);
+    usp->pf = pf;
+
     Dict* dict = qp->msg = Dict_new(qp->alloc);
     qp->cb = unsetupSessionPingReply;
-    qp->userData = pf;
+    qp->userData = usp;
 
-    Assert_true(AddressCalc_validAddress(addr.ip6.bytes));
-    Assert_true(addr.path);
-    qp->target = Address_clone(&addr, qp->alloc);
+    Assert_true(AddressCalc_validAddress(addr->ip6.bytes));
+    Assert_true(addr->path);
+    qp->target = Address_clone(addr, qp->alloc);
 
     //Log_debug(pf->log, "unsetupSession sending ping to [%s]",
     //    Address_toString(qp->target, qp->alloc)->bytes);
     Dict_putStringCC(dict, "q", "pn", qp->alloc);
 
-    BoilerplateResponder_addBoilerplate(pf->br, dict, &addr, qp->alloc);
+    BoilerplateResponder_addBoilerplate(pf->br, dict, addr, qp->alloc);
+
+    int index = Map_OfPromiseByQuery_put(&q, &qp, &pf->queryMap);
+    usp->mapHandle = pf->queryMap.handles[index];
 
     return NULL;
 }
@@ -371,6 +441,22 @@ static Iface_DEFUN unsetupSession(struct Message* msg, struct SubnodePathfinder_
 static Iface_DEFUN incomingMsg(struct Message* msg, struct SubnodePathfinder_pvt* pf)
 {
     return Iface_next(&pf->msgCoreIf, msg);
+}
+
+static Iface_DEFUN linkState(struct Message* msg, struct SubnodePathfinder_pvt* pf)
+{
+    while (msg->length) {
+        struct PFChan_LinkState_Entry lse;
+        Message_pop(msg, &lse, PFChan_LinkState_Entry_SIZE, NULL);
+        ReachabilityCollector_updateBandwidthAndDrops(
+            pf->pub.rc,
+            Endian_bigEndianToHost32(lse.peerLabel_be),
+            Endian_bigEndianToHost32(lse.sumOfPackets_be),
+            Endian_bigEndianToHost32(lse.sumOfDrops_be),
+            Endian_bigEndianToHost32(lse.sumOfKb_be)
+        );
+    }
+    return NULL;
 }
 
 static Iface_DEFUN incomingFromMsgCore(struct Message* msg, struct Iface* iface)
@@ -410,6 +496,7 @@ static Iface_DEFUN incomingFromEventIf(struct Message* msg, struct Iface* eventI
         case PFChan_Core_PONG: return handlePong(msg, pf);
         case PFChan_Core_CTRL_MSG: return ctrlMsg(msg, pf);
         case PFChan_Core_UNSETUP_SESSION: return unsetupSession(msg, pf);
+        case PFChan_Core_LINK_STATE: return linkState(msg, pf);
         default:;
     }
     Assert_failure("unexpected event [%d]", ev);
@@ -431,26 +518,25 @@ static void sendEvent(struct SubnodePathfinder_pvt* pf,
 void SubnodePathfinder_start(struct SubnodePathfinder* sp)
 {
     struct SubnodePathfinder_pvt* pf = Identity_check((struct SubnodePathfinder_pvt*) sp);
-    pf->msgCore = MsgCore_new(pf->base, pf->rand, pf->alloc, pf->log, pf->myScheme);
-    Iface_plumb(&pf->msgCoreIf, &pf->msgCore->interRouterIf);
+    struct MsgCore* msgCore = pf->msgCore =
+        MsgCore_new(pf->base, pf->rand, pf->alloc, pf->log, pf->myScheme);
+    Iface_plumb(&pf->msgCoreIf, &msgCore->interRouterIf);
 
-    PingResponder_new(pf->alloc, pf->log, pf->msgCore, pf->br);
+    PingResponder_new(pf->alloc, pf->log, msgCore, pf->br);
 
     GetPeersResponder_new(
-        pf->alloc, pf->log, pf->myPeers, pf->myAddress, pf->msgCore, pf->br, pf->myScheme);
+        pf->alloc, pf->log, pf->myPeers, pf->myAddress, msgCore, pf->br, pf->myScheme);
 
-    pf->pub.snh = SupernodeHunter_new(
-        pf->alloc, pf->log, pf->base, pf->sp, pf->myPeers, pf->msgCore, pf->myAddress);
+    struct ReachabilityCollector* rc = pf->pub.rc = ReachabilityCollector_new(
+        pf->alloc, msgCore, pf->log, pf->base, pf->br, pf->myAddress, pf->myScheme);
+    rc->userData = pf;
+    rc->onChange = rcChange;
+
+    struct SupernodeHunter* snh = pf->pub.snh = SupernodeHunter_new(
+        pf->alloc, pf->log, pf->base, pf->sp, pf->myPeers, msgCore, pf->myAddress, rc);
 
     pf->ra = ReachabilityAnnouncer_new(
-        pf->alloc, pf->log, pf->base, pf->rand, pf->msgCore, pf->pub.snh, pf->privateKey,
-            pf->myScheme);
-
-    pf->pub.rc = ReachabilityCollector_new(
-        pf->alloc, pf->msgCore, pf->log, pf->base, pf->br, pf->myAddress);
-
-    pf->pub.rc->userData = pf;
-    pf->pub.rc->onChange = rcChange;
+        pf->alloc, pf->log, pf->base, pf->rand, msgCore, snh, pf->privateKey, pf->myScheme);
 
     struct PFChan_Pathfinder_Connect conn = {
         .superiority_be = Endian_hostToBigEndian32(1),
@@ -490,6 +576,7 @@ struct SubnodePathfinder* SubnodePathfinder_new(struct Allocator* allocator,
     pf->pub.eventIf.send = incomingFromEventIf;
     pf->msgCoreIf.send = incomingFromMsgCore;
     pf->privateKey = privateKey;
+    pf->queryMap.allocator = Allocator_child(alloc);
 
     pf->myScheme = myScheme;
     pf->br = BoilerplateResponder_new(myScheme, alloc);
