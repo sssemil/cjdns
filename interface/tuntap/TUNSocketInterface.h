@@ -12,29 +12,27 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#ifndef TUNSocksInterface_H
-#define TUNSocksInterface_H
+#ifndef TUNSocketInterface_H
+#define TUNSocketInterface_H
 
 #include "util/events/EventBase.h"
 #include "util/log/Log.h"
 #include "exception/Except.h"
 #include "memory/Allocator.h"
 #include "util/Linker.h"
-Linker_require("interface/tuntap/TUNSocksInterface_" + builder.config.systemName + ".c");
+Linker_require("interface/tuntap/TUNSocketInterface_" + builder.config.systemName + ".c");
 
 /**
- * Create a new TUNSocksInterface.
+ * Create a new TUNSocketInterface.
  *
- * @param pipeIn FIFO pipe for stdin from tunsocks.
- * @param pipeOut FIFO pipe for stdout from tunsocks.
+ * @param socket UNIX socket to connect with a TCP/IP stack.
  * @param base the libevent event base to use for listening for incoming packet events.
  * @param logger for logging messages about the tun device.
  * @param eh if this function fails, it will raise one an error.
  * @param allocator a means of getting memory.
  * @return a Interface.
  */
-struct Iface* TUNSocksInterface_new(const char* pipeIn,
-                                    const char* pipeOut,
+struct Iface* TUNSocketInterface_new(const char* socket,
                                     struct EventBase* base,
                                     struct Log* logger,
                                     struct Except* eh,

@@ -12,7 +12,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-#include "interface/tuntap/TUNSocksInterface.h"
+#include "interface/tuntap/TUNSocketInterface.h"
 #include "exception/Except.h"
 #include "memory/Allocator.h"
 #include "util/events/EventBase.h"
@@ -34,49 +34,49 @@
 #include <linux/if_ether.h>
 #include <net/if.h>
 
-struct Iface* TUNSocksInterface_new(const char* pipeIn,
-                                    const char* pipeOut,
+#include <sys/un.h>
+#include <stdio.h>
+#include <unistd.h>
+
+struct Iface* TUNSocketInterface_new(const char* socket_path,
                                     struct EventBase* base,
                                     struct Log* logger,
                                     struct Except* eh,
                                     struct Allocator* alloc)
 {
-    Log_info(logger, "Initializing tunsocks pipes: pipeIn: %s; pipeOut: %s;", pipeIn, pipeOut);
+    Log_info(logger, "Initializing socket %s;", socket_path);
 
-    char* str;
+    struct sockaddr_un addr;
+    int fd;
 
-    int fdin = 0;
-    int fdout = 1;
-
-    if ((str = getenv("CJDNSFDIN")))
+    if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
     {
-        fdin = strtoul(str, NULL, 0);
+        Except_throw(eh, "socket(\"%s\") [%s]", socket_path, strerror(errno));
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    if (*socket_path == '\0')
+    {
+        *addr.sun_path = '\0';
+        strncpy(addr.sun_path + 1, socket_path + 1, sizeof(addr.sun_path) - 2);
     }
     else
     {
-        fdin = open(pipeIn, O_RDONLY);
+        strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
     }
 
-    if ((str = getenv("CJDNSFDOUT")))
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
     {
-        fdout = strtoul(str, NULL, 0);
-    }
-    else
-    {
-        fdout = open(pipeOut, O_WRONLY);
+        Except_throw(eh, "socket(\"%s\") connect error [%s]", socket_path, strerror(errno));
     }
 
-    if (fdin < 0)
+    if (fd < 0)
     {
-        Except_throw(eh, "open(\"%s\") [%s]", pipeIn, strerror(errno));
+        Except_throw(eh, "Could not open socket! (\"%s\") [%s]", socket_path, strerror(errno));
     }
 
-    if (fdout < 0)
-    {
-        Except_throw(eh, "open(\"%s\") [%s]", pipeOut, strerror(errno));
-    }
-
-    struct Pipe* p = Pipe_forFiles(fdin, fdout, base, eh, alloc);
+    struct Pipe* p = Pipe_forFiles(fd, fd, base, eh, alloc);
 
     return &p->iface;
 }

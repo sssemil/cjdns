@@ -288,33 +288,25 @@ static void tunInterface(Dict* ifaceConf, struct Allocator* tempAlloc, struct Co
     }
 }
 
-static void tunSocksInterface(Dict* ifaceConf, struct Allocator* tempAlloc, struct Context* ctx)
+static void tunSocketInterface(Dict* ifaceConf, struct Allocator* tempAlloc, struct Context* ctx)
 {
     String* ifaceType = Dict_getStringC(ifaceConf, "type");
-    if (!String_equals(ifaceType, String_CONST("TUNSocksInterface"))) {
+    if (!String_equals(ifaceType, String_CONST("TUNSocketInterface"))) {
         return;
     }
 
     // Setup the interface.
-    String* pipeIn = Dict_getStringC(ifaceConf, "pipeIn");
-    String* pipeOut = Dict_getStringC(ifaceConf, "pipeOut");
+    String* socket = Dict_getStringC(ifaceConf, "socket");
 
     Dict* args = Dict_new(tempAlloc);
-    if (!pipeIn) {
+    if (!socket) {
         Log_critical(ctx->logger, "In router.interface"
-                                  " 'pipeIn' is required if it's TUNSocksInterface.");
+                                  " 'socket' is required if it's TUNSocketInterface.");
         exit(1);
     }
 
-    if (!pipeOut) {
-        Log_critical(ctx->logger, "In router.interface"
-                                  " 'pipeIn' is required if it's TUNSocksInterface.");
-        exit(1);
-    }
-
-    Dict_putStringC(args, "pipeIn", pipeIn, tempAlloc);
-    Dict_putStringC(args, "pipeOut", pipeOut, tempAlloc);
-    rpcCall0(String_CONST("Core_initTunSocks"), args, ctx, tempAlloc, NULL, true);
+    Dict_putStringC(args, "socket", socket, tempAlloc);
+    rpcCall0(String_CONST("Core_initTunSocket"), args, ctx, tempAlloc, NULL, true);
 }
 
 static void ipTunnel(Dict* ifaceConf, struct Allocator* tempAlloc, struct Context* ctx)
@@ -401,7 +393,7 @@ static void supernodes(List* supernodes, struct Allocator* tempAlloc, struct Con
 static void routerConfig(Dict* routerConf, struct Allocator* tempAlloc, struct Context* ctx)
 {
     tunInterface(Dict_getDictC(routerConf, "interface"), tempAlloc, ctx);
-    tunSocksInterface(Dict_getDictC(routerConf, "interface"), tempAlloc, ctx);
+    tunSocketInterface(Dict_getDictC(routerConf, "interface"), tempAlloc, ctx);
     ipTunnel(Dict_getDictC(routerConf, "ipTunnel"), tempAlloc, ctx);
     supernodes(Dict_getListC(routerConf, "supernodes"), tempAlloc, ctx);
 }
